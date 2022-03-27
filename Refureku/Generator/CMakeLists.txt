@@ -36,11 +36,14 @@ else ()	# Clang or GCC
 	
 endif()
 
+target_compile_options(${RefurekuGeneratorExeTarget} PRIVATE -O2 -march=native)
+set_target_properties(${RefurekuGeneratorExeTarget} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_DEBUG ON)
+set_target_properties(${RefurekuGeneratorExeTarget} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON) #link time optimization
 
 # Copy the RefurekuSettings template file next to the generated binary
-add_custom_command(	TARGET ${RefurekuGeneratorExeTarget} PRE_BUILD
-					COMMAND ${CMAKE_COMMAND} -E copy
-					${PROJECT_SOURCE_DIR}/RefurekuSettings.toml
-					$<IF:$<BOOL:${MSVC}>,${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/RefurekuSettings.toml,${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/RefurekuSettings.toml>)
+#add_custom_command(	TARGET ${RefurekuGeneratorExeTarget} PRE_BUILD
+#					COMMAND ${CMAKE_COMMAND} -E copy
+#					${PROJECT_SOURCE_DIR}/RefurekuSettings.toml
+#					$<IF:$<BOOL:${MSVC}>,${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/RefurekuSettings.toml,${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/RefurekuSettings.toml>)
 
-add_subdirectory(LibraryGenerator)
+#add_subdirectory(LibraryGenerator)
