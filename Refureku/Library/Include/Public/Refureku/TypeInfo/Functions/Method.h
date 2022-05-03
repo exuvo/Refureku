@@ -8,9 +8,14 @@
 #pragma once
 
 #include <type_traits>	//std::enable_if_v, std::is_const_v
+#include <cassert>
 
+#include "Refureku/TypeInfo/Cast.h"
+#include "Refureku/TypeInfo/Archetypes/Struct.h"
 #include "Refureku/TypeInfo/Functions/MethodBase.h"
 #include "Refureku/TypeInfo/Functions/MemberFunction.h"
+#include "Refureku/Misc/CopyConstness.h"
+#include "Refureku/Exceptions/InvalidCaller.h"
 
 namespace rfk
 {
@@ -37,7 +42,10 @@ namespace rfk
 			*	@tparam CallerType	Type of the calling struct/class.
 			*	@tparam... ArgTypes	Type of all arguments. This can in some cases be omitted thanks to template deduction.
 			*
-			*	@param args Arguments forwarded to the function call.
+			*	@param caller	Object instance calling the method. Caller is not required to implement the getArchetype method, but the invoke method will
+			*					likely crash if the memory offset between the CallerType static archetype and its actual dynamic archetype is different from 0.
+			*					If CallerType implements the getArchetype method (rfk::Object), no such error will ever happen.
+			*	@param args		Arguments forwarded to the function call.
 			* 
 			*	@return The result of the function call.
 			* 
@@ -62,14 +70,17 @@ namespace rfk
 			*	@tparam CallerType	Type of the calling struct/class.
 			*	@tparam... ArgTypes	Type of all arguments. This can in some cases be omitted thanks to template deduction.
 			*
-			*	@param args Arguments forwarded to the function call.
+			*	@param caller	Object instance calling the method. It MUST implement the getArchetype method (rfk::Object) for all safety checks to be performed properly.
+			*	@param args		Arguments forwarded to the function call.
 			*
 			*	@return The result of the function call.
 			* 
-			*	@exception	ArgCountMismatch if sizeof...(ArgTypes) is not the same as the value returned by getParametersCount().
-			*	@exception	ArgTypeMismatch if ArgTypes... are not strictly the same as this function parameter types.
+			*	@exception	ArgCountMismatch	if sizeof...(ArgTypes) is not the same as the value returned by getParametersCount().
+			*	@exception	ArgTypeMismatch		if ArgTypes... are not strictly the same as this function parameter types.
 			*				**WARNING**: Be careful to template deduction.
-			*	@exception	ReturnTypeMismatch if ReturnType is not strictly the same as this function return type.
+			*	@exception	ReturnTypeMismatch	if ReturnType is not strictly the same as this function return type.
+			*	@exception	NotReflectedClass	if the caller struct is not reflected (rfk::getArchetype<CallerType>() == nullptr).
+			*	@exception	InvalidCaller		if the caller struct can't call the method (struct that introduced this method is not in the caller parent's hierarchy).
 			*	@exception	Any exception potentially thrown from the underlying function.
 			*/
 			template <typename ReturnType = void, typename CallerType, typename... ArgTypes, typename = std::enable_if_t<!std::is_const_v<CallerType>>>
@@ -87,6 +98,36 @@ namespace rfk
 			//Forward declaration
 			class MethodImpl;
 
+			template <typename CallerType, typename FunctionPrototype>
+			class MemberFunctionSafeCallWrapper;
+
+			template <typename CallerType, typename ReturnType, typename... ArgTypes>
+			class MemberFunctionSafeCallWrapper<CallerType, ReturnType(ArgTypes...)>
+			{
+				private:
+					template <typename T>
+					using PointerToMemberMethod = ReturnType (T::*)(ArgTypes...);
+
+				public:
+					MemberFunctionSafeCallWrapper() = delete;
+
+					/**
+					*	@brief	Invoke the provided member function.
+					*			This wrapper method performs intermediate compiler-dependant checks to safely cast the provided function.
+					* 
+					*	@param function MemberFunction to call.
+					*	@param caller	Instance calling the member function.
+					*	@param args...	Arguments forwarded to the function call.
+					* 
+					*	@return The result of the function call.
+					* 
+					*	@exception Any exception thrown by the underlying member function call.
+					*/
+					static ReturnType invoke(MemberFunction<std::remove_const_t<CallerType>, ReturnType(ArgTypes...)> const& function,
+											 CallerType&																	 caller,
+											 ArgTypes&&...																	 args);
+			};
+
 			/**
 			*	@brief Call the underlying method with the forwarded args.
 			* 
@@ -100,16 +141,91 @@ namespace rfk
 			*	@return The result of the underlying method call.
 			*/
 			template <typename ReturnType, typename CallerType, typename... ArgTypes>
-			ReturnType						internalInvoke(CallerType& caller, ArgTypes&&... args)			const;
-			template <typename ReturnType, typename CallerType, typename... ArgTypes>
-			ReturnType						internalInvoke(CallerType const& caller, ArgTypes&&... args)	const;
+			ReturnType						internalInvoke(CallerType& caller, ArgTypes&&... args)				const;
 
 			/**
-			*	@brief Throw a const violation exception with the provided message.
+			*	@brief	Adjust the memory address of the caller so that the right method is called.
+			*			In most cases no adjustment is required, but it is necessary when the called method is virtual
+			*			and the virtual table containing the method is not at a 0 offset of the caller address.
+			*			If the address could not be adjusted (because of unreflected types for example),
+			*			the provided caller is returned as is and no error is thrown.
+			* 
+			*	@tparam CallerType Type of the calling struct/class.
+			* 
+			*	@param caller A pointer to the caller.
+			* 
+			*	@return The adjusted caller address.
+			*/
+			template <typename CallerType>
+			RFK_NODISCARD CallerType&		adjustCallerAddress(CallerType& caller)								const	noexcept;
+
+			/**
+			*	@brief	Adjust the memory address of the caller so that the right method is called.
+			*			In most cases no adjustment is required, but it is necessary when the called method is virtual
+			*			and the virtual table containing the method is not at a 0 offset of the caller address.
+			*			If the address could not be adjusted (because of unreflected types for example),
+			*			the provided caller is returned as is and no error is thrown.
+			* 
+			*	@tparam CallerType Type of the calling struct/class.
+			* 
+			*	@param caller					A pointer to the caller.
+			*	@param callerDynamicArchetype	Dynamic archetype of the caller.
+			* 
+			*	@return The adjusted caller address.
+			*/
+			template <typename CallerType>
+			RFK_NODISCARD CallerType&		adjustCallerAddress(CallerType&	  caller,
+																Struct const& callerDynamicArchetype)			const	noexcept;
+
+			/**
+			*	@brief	Adjust the memory address of the caller so that the right method is called.
+			*			In most cases no adjustment is required, but it is necessary when the called method is virtual
+			*			and the virtual table containing the method is not at a 0 offset of the caller address.
+			* 
+			*	@tparam CallerType Type of the calling struct/class.
+			* 
+			*	@param caller A pointer to the caller.
+			* 
+			*	@return The adjusted caller address.
+			* 
+			*	@exception NotReflectedClass if the caller struct is not reflected (rfk::getArchetype<CallerType>() == nullptr).
+			*	@exception InvalidCaller	 if the caller struct can't call the method (struct that introduced this method is not in the caller parent's hierarchy).
+			*/
+			template <typename CallerType>
+			RFK_NODISCARD CallerType&		checkedAdjustCallerAddress(CallerType& caller)						const;
+
+			/**
+			*	@brief	Adjust the memory address of the caller so that the right method is called.
+			*			In most cases no adjustment is required, but it is necessary when the called method is virtual
+			*			and the virtual table containing the method is not at a 0 offset of the caller address.
+			* 
+			*	@tparam CallerType Type of the calling struct/class.
+			* 
+			*	@param caller					A pointer to the caller.
+			*	@param callerDynamicArchetype	Dynamic archetype of the caller.
+			* 
+			*	@return The adjusted caller address.
+			* 
+			*	@exception NotReflectedClass if the caller struct is not reflected (rfk::getArchetype<CallerType>() == nullptr).
+			*	@exception InvalidCaller	 if the caller struct can't call the method (struct that introduced this method is not in the caller parent's hierarchy).
+			*/
+			template <typename CallerType>
+			RFK_NODISCARD CallerType&		checkedAdjustCallerAddress(CallerType&	 caller,
+																	   Struct const& callerDynamicArchetype)	const;
+
+			/**
+			*	@brief Throw a ConstViolation exception with the provided message.
 			* 
 			*	@param message Message forwarded to the exception.
 			*/
-			RFK_NORETURN REFUREKU_API void	throwConstViolationException(char const* message)				const;
+			RFK_NORETURN REFUREKU_API void	throwConstViolationException()										const;
+
+			/**
+			*	@brief Throw an InvalidCaller exception with the provided message.
+			* 
+			*	@param message Message forwarded to the exception.
+			*/
+			RFK_NORETURN REFUREKU_API void	throwInvalidCallerException()										const;
 	};
 
 	REFUREKU_TEMPLATE_API(rfk::Allocator<Method const*>);

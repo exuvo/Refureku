@@ -96,7 +96,6 @@ kodgen::ETraversalBehaviour	ReflectionCodeGenModule::generateClassFooterCodeForE
 			declareFriendClasses(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
 
 			declareAndDefineRegisterChildClassMethod(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
-			declareGetNestedEnumMethods(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
 
 			if (static_cast<kodgen::StructClassInfo const&>(entity).type.isTemplateType())
 			{
@@ -260,7 +259,6 @@ kodgen::ETraversalBehaviour ReflectionCodeGenModule::generateSourceFileHeaderCod
 				defineStaticGetArchetypeMethod(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
 				defineGetArchetypeMethodIfInheritFromObject(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
 				defineGetArchetypeTemplateSpecialization(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
-				defineGetNestedEnumMethods(static_cast<kodgen::StructClassInfo const&>(entity), env, inout_result);
 			}
 
 			result = kodgen::ETraversalBehaviour::Recurse;
@@ -362,7 +360,119 @@ void ReflectionCodeGenModule::includeSourceFileHeaders(kodgen::MacroCodeGenEnv& 
 void ReflectionCodeGenModule::declareFriendClasses(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
 {
 	inout_result += "friend rfk::internal::CodeGenerationHelpers;" + env.getSeparator();
-	inout_result += "friend implements_template1__rfk_registerChildClass<" + structClass.name + ", void, void(rfk::Struct&)>; " + env.getSeparator() + env.getSeparator();
+	inout_result += "friend rfk::internal::implements_template1__rfk_registerChildClass<" + structClass.name + ", void, void(rfk::Struct&)>; " + env.getSeparator();
+
+	auto generateFriendStatementsForNestedArchetypes = [&env, &inout_result, &structClass]() -> void
+	{
+		bool generatedNonTemplateNestedClassGetArchetypeFriendStatement = false;
+		bool generatedGetEnumFriendStatement = false;
+		bool generatedVariadicTypeTemplateGetArchetype = false;
+		bool generatedVariadicNonTypeTemplateGetArchetype = false;
+
+		auto intermediateLambda = [&generatedNonTemplateNestedClassGetArchetypeFriendStatement, &generatedGetEnumFriendStatement,
+								   &generatedVariadicTypeTemplateGetArchetype, &generatedVariadicNonTypeTemplateGetArchetype, &env, &inout_result]
+								   (kodgen::StructClassInfo const& structClass, auto const& thisLambda, std::size_t nestingLevel) -> void
+		{
+			auto generateFriendStatementsForNestedArcheteypesInternal = [&generatedNonTemplateNestedClassGetArchetypeFriendStatement, &generatedVariadicTypeTemplateGetArchetype,
+																		 &generatedVariadicNonTypeTemplateGetArchetype, &env, &inout_result]
+																		 (std::vector<std::shared_ptr<kodgen::NestedStructClassInfo>> const& nestedStructClasses,
+																		  auto const& recurseLambda, std::size_t nestingLevel) -> void
+			{
+				auto classTemplateCodeGeneration = [&generatedVariadicTypeTemplateGetArchetype, &generatedVariadicNonTypeTemplateGetArchetype, &env, &inout_result]
+													(std::shared_ptr<kodgen::NestedStructClassInfo> const& nestedStructClass)
+				{
+					//Case all template params are type template params
+					if (std::all_of(nestedStructClass->type.getTemplateParameters().cbegin(),
+						nestedStructClass->type.getTemplateParameters().cend(),
+						[](kodgen::TemplateParamInfo const& templateParam)
+						{
+							return templateParam.kind == kodgen::ETemplateParameterKind::TypeTemplateParameter;
+						}))
+					{
+						if (generatedVariadicTypeTemplateGetArchetype)
+						{
+							return;
+						}
+
+						generatedVariadicTypeTemplateGetArchetype = true;
+						inout_result += "template <template <typename...> typename>";
+					}
+					//Case all template params are non-type template params
+					else if (std::all_of(nestedStructClass->type.getTemplateParameters().cbegin(),
+							 nestedStructClass->type.getTemplateParameters().cend(),
+							 [](kodgen::TemplateParamInfo const& templateParam)
+							 {
+								 return templateParam.kind == kodgen::ETemplateParameterKind::NonTypeTemplateParameter;
+							 }))
+					{
+						if (generatedVariadicNonTypeTemplateGetArchetype)
+						{
+							return;
+						}
+
+						generatedVariadicNonTypeTemplateGetArchetype = true;
+						inout_result += "template <template <auto...> typename>";
+					}
+					//Other cases
+					else
+					{
+						inout_result += "template <template <" + nestedStructClass->type.computeTemplateSignature(true) + "> typename>";
+					}
+
+					inout_result += " friend rfk::Archetype const* rfk::getArchetype() noexcept;" + env.getSeparator();
+
+					//Reflect class template nested archetypes is not supported for now, so no recursion from here.
+				};
+
+				for (std::shared_ptr<kodgen::NestedStructClassInfo> const& nestedStructClass : nestedStructClasses)
+				{
+					if (nestedStructClass->accessSpecifier == kodgen::EAccessSpecifier::Public && nestingLevel == 1u)
+					{
+						//If the first nesting level is public, then it is normally accessible, no friend statement needed
+						continue;
+					}
+					else if (nestedStructClass->type.isTemplateType())
+					{
+						classTemplateCodeGeneration(nestedStructClass);
+					}
+					else //Non-public non-template class
+					{
+						//If the basic definition for all non-template classes has not been generated yet, generate it
+						if (!generatedNonTemplateNestedClassGetArchetypeFriendStatement)
+						{
+							generatedNonTemplateNestedClassGetArchetypeFriendStatement = true;
+							inout_result += "template <typename> friend rfk::Archetype const* rfk::getArchetype() noexcept;" + env.getSeparator();
+						}
+
+						recurseLambda(*nestedStructClass, recurseLambda, nestingLevel + 1u);
+					}
+				}
+			};
+
+			generateFriendStatementsForNestedArcheteypesInternal(structClass.nestedStructs, thisLambda, nestingLevel);
+			generateFriendStatementsForNestedArcheteypesInternal(structClass.nestedClasses, thisLambda, nestingLevel);
+
+			//Generate rfk::getEnum friend statement if necessary
+			if (!generatedGetEnumFriendStatement)
+			{
+				for (kodgen::NestedEnumInfo const& nestedEnum : structClass.nestedEnums)
+				{
+					if (nestingLevel != 1u || nestedEnum.accessSpecifier != kodgen::EAccessSpecifier::Public)
+					{
+						generatedGetEnumFriendStatement = true;
+						inout_result += "template <typename> friend rfk::Enum const* rfk::getEnum() noexcept;" + env.getSeparator();
+						break;
+					}
+				}
+			}
+		};
+
+		intermediateLambda(structClass, intermediateLambda, 1u);
+	};
+
+	generateFriendStatementsForNestedArchetypes();
+
+	inout_result += env.getSeparator();
 }
 
 void ReflectionCodeGenModule::declareStaticGetArchetypeMethod(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
@@ -418,7 +528,7 @@ void ReflectionCodeGenModule::defineStaticGetArchetypeMethod(kodgen::StructClass
 	fillClassFields(structClass, env, "type", inout_result);
 
 	//Set the default instantiator BEFORE filling the class methods since methods can overwrite the custom instantiator
-	setClassDefaultInstantiator(structClass, env, "type.", inout_result);
+	setClassDefaultInstantiators(structClass, env, "type.", inout_result);
 	fillClassMethods(structClass, env, "type.", inout_result);
 	fillClassNestedArchetypes(structClass, env, "type.", inout_result);
 
@@ -432,11 +542,6 @@ void ReflectionCodeGenModule::defineStaticGetArchetypeMethod(kodgen::StructClass
 std::string ReflectionCodeGenModule::computePropertyVariableName(kodgen::EntityInfo const& entity, kodgen::uint8 propertyIndex) noexcept
 {
 	return "property_" + getEntityId(entity) + "_" + std::to_string(propertyIndex);
-}
-
-std::string ReflectionCodeGenModule::computeGetNestedEnumMethodName(kodgen::NestedEnumInfo const& nestedEnum) noexcept
-{
-	return "_rfk_getNestedEnum_" + nestedEnum.name;
 }
 
 bool ReflectionCodeGenModule::isPublicClass(kodgen::StructClassInfo const& class_) noexcept
@@ -474,6 +579,11 @@ std::string ReflectionCodeGenModule::computeClassNestedEntityId(std::string clas
 	return "std::hash<std::string>()(std::string(\"" + entity.id + "\") + rfk::internal::getTypename<" + std::move(className) + ">())";
 }
 
+std::string ReflectionCodeGenModule::computeGetArchetypeFunctionSignature(kodgen::StructClassInfo const& structClass) noexcept
+{
+	return "rfk::Archetype const* rfk::getArchetype<" + structClass.type.getName() + ">() noexcept";
+}
+
 void ReflectionCodeGenModule::beginHiddenGeneratedCode(kodgen::MacroCodeGenEnv& /*env*/, std::string& inout_result) noexcept
 {
 	if (!_isGeneratingHiddenCode)
@@ -495,7 +605,6 @@ void ReflectionCodeGenModule::endHiddenGeneratedCode(kodgen::MacroCodeGenEnv& en
 void ReflectionCodeGenModule::reset() noexcept
 {
 	_isGeneratingHiddenCode = false;
-	_nonPublicEnums.clear();
 }
 
 void ReflectionCodeGenModule::checkHiddenGeneratedCodeState() const noexcept
@@ -574,7 +683,7 @@ void ReflectionCodeGenModule::fillEntityProperties(kodgen::EntityInfo const& ent
 	}
 }
 
-void ReflectionCodeGenModule::setClassDefaultInstantiator(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env,
+void ReflectionCodeGenModule::setClassDefaultInstantiators(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env,
 														  std::string const& generatedClassVarName, std::string& inout_result) noexcept
 {
 	inout_result += "static rfk::StaticMethod defaultSharedInstantiator(\"\", 0u, rfk::getType<rfk::SharedPtr<" + structClass.name +">>(),"
@@ -582,6 +691,12 @@ void ReflectionCodeGenModule::setClassDefaultInstantiator(kodgen::StructClassInf
 		"rfk::EMethodFlags::Default, nullptr);" + env.getSeparator();
 
 	inout_result += generatedClassVarName + "addSharedInstantiator(defaultSharedInstantiator);" + env.getSeparator();
+
+	inout_result += "static rfk::StaticMethod defaultUniqueInstantiator(\"\", 0u, rfk::getType<rfk::UniquePtr<" + structClass.name +">>(),"
+		"new rfk::NonMemberFunction<rfk::UniquePtr<" + structClass.name + ">()>(&rfk::internal::CodeGenerationHelpers::defaultUniqueInstantiator<" + structClass.name + ">),"
+		"rfk::EMethodFlags::Default, nullptr);" + env.getSeparator();
+
+	inout_result += generatedClassVarName + "addUniqueInstantiator(defaultUniqueInstantiator);" + env.getSeparator();
 }
 
 void ReflectionCodeGenModule::fillClassParents(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env,
@@ -612,12 +727,18 @@ void ReflectionCodeGenModule::fillClassMethods(kodgen::StructClassInfo const& st
 		inout_result += "[[maybe_unused]] rfk::Method* method = nullptr; [[maybe_unused]] rfk::StaticMethod* staticMethod = nullptr;" + env.getSeparator();
 	}
 
+	std::size_t setMethodsCountInsertionOffset = inout_result.size();
+	std::size_t methodsCount = 0u;
+	std::size_t staticMethodsCount = 0u;
+
 	std::string generatedCode;
 	std::string currentMethodVariable;
 	for (kodgen::MethodInfo const& method : structClass.methods)
 	{
 		if (method.isStatic)
 		{
+			staticMethodsCount++;
+
 			inout_result += "staticMethod = " + generatedEntityVarName + "addStaticMethod(\"" + method.name + "\", " +
 				(structClass.type.isTemplateType() ? computeClassTemplateEntityId(structClass, method) : std::to_string(_stringHasher(method.id)) + "u") + ", "
 				"rfk::getType<" + method.returnType.getName() + ">(), "
@@ -628,6 +749,8 @@ void ReflectionCodeGenModule::fillClassMethods(kodgen::StructClassInfo const& st
 		}
 		else
 		{
+			methodsCount++;
+
 			inout_result += "method = " + generatedEntityVarName + "addMethod(\"" + method.name + "\", " +
 				(structClass.type.isTemplateType() ? computeClassTemplateEntityId(structClass, method) : std::to_string(_stringHasher(method.id)) + "u") + ", "
 				"rfk::getType<" + method.returnType.getName() + ">(), "
@@ -663,7 +786,7 @@ void ReflectionCodeGenModule::fillClassMethods(kodgen::StructClassInfo const& st
 			{
 				if (_instantiatorProperty.shouldGenerateCodeForEntity(method, method.properties[i], i))
 				{
-					_instantiatorProperty.addInstantiatorToClass(method.properties[i], generatedEntityVarName, "staticMethod", inout_result);
+					_instantiatorProperty.addInstantiatorToClass(method, method.properties[i], generatedEntityVarName, "staticMethod", inout_result);
 					break;
 				}
 			}
@@ -679,6 +802,12 @@ void ReflectionCodeGenModule::fillClassMethods(kodgen::StructClassInfo const& st
 			}
 		}
 	}
+
+	//Generate code to reserve right amount of memory for methods and static methods
+	std::string setMethodsCapacityGeneratedCode = generatedEntityVarName + "setMethodsCapacity(" + std::to_string(methodsCount) + "u); ";
+	inout_result.insert(setMethodsCountInsertionOffset, setMethodsCapacityGeneratedCode); //methods
+	inout_result.insert(setMethodsCountInsertionOffset + setMethodsCapacityGeneratedCode.size(),
+						generatedEntityVarName + "setStaticMethodsCapacity(" + std::to_string(staticMethodsCount) + "u); " + env.getSeparator()); //static methods
 }
 
 void ReflectionCodeGenModule::fillClassNestedArchetypes(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string const& generatedEntityVarName, std::string& inout_result) noexcept
@@ -716,7 +845,7 @@ void ReflectionCodeGenModule::fillClassNestedArchetypes(kodgen::StructClassInfo 
 	for (kodgen::NestedEnumInfo const& nestedEnum : structClass.nestedEnums)
 	{
 		inout_result += generatedEntityVarName + "addNestedArchetype(" + 
-			(isRegisteredNonPublicEnum(nestedEnum) ? computeGetNestedEnumMethodName(nestedEnum) : "rfk::getEnum<" + nestedEnum.type.getCanonicalName() + ">") + "(), "
+			"rfk::getEnum<" + nestedEnum.type.getCanonicalName() + ">(), "
 			"static_cast<rfk::EAccessSpecifier>(" + std::to_string(static_cast<kodgen::uint8>(nestedEnum.accessSpecifier)) + "));" + env.getSeparator();
 	}
 }
@@ -733,20 +862,13 @@ void ReflectionCodeGenModule::defineGetArchetypeMethodIfInheritFromObject(kodgen
 
 void ReflectionCodeGenModule::declareGetArchetypeTemplateSpecialization(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
 {
-	if (isPublicClass(structClass))
-	{
-		inout_result += "template <> " + env.getExportSymbolMacro() + " rfk::Archetype const* rfk::getArchetype<" + structClass.type.getName() + ">() noexcept;" + env.getSeparator();
-	}
+	inout_result += "template <> " + env.getExportSymbolMacro() + " " + computeGetArchetypeFunctionSignature(structClass) + ";" + env.getSeparator();
 }
 
 void ReflectionCodeGenModule::defineGetArchetypeTemplateSpecialization(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
 {
-	//Generate the getArchetype specialization only if the class is non-nested, namespace nested or publicly nested in a struct/class
-	if (isPublicClass(structClass))
-	{
-		inout_result += "template <> rfk::Archetype const* rfk::getArchetype<" + structClass.getFullName() + ">() noexcept { " +
-			"return &" + structClass.getFullName() + "::staticGetArchetype(); }" + env.getSeparator() + env.getSeparator();
-	}
+	inout_result += "template <> rfk::Archetype const* rfk::getArchetype<" + structClass.getFullName() + ">() noexcept { " +
+		"return &" + structClass.getFullName() + "::staticGetArchetype(); }" + env.getSeparator() + env.getSeparator();
 }
 
 void ReflectionCodeGenModule::declareAndDefineRegisterChildClassMethod(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) noexcept
@@ -755,16 +877,21 @@ void ReflectionCodeGenModule::declareAndDefineRegisterChildClassMethod(kodgen::S
 
 	inout_result += "private: template <typename ChildClass> static void _rfk_registerChildClass(rfk::Struct& childClass) noexcept {" + env.getSeparator();
 
-	//Propagate the child class registration to parent classes too
-	for (kodgen::StructClassInfo::ParentInfo const& parent : structClass.parents)
-	{
-		inout_result += "rfk::internal::CodeGenerationHelpers::registerChildClass<" + parent.type.getName(true) + ", ChildClass>(childClass);" + env.getSeparator();
-	}
-
 	inout_result += "rfk::Struct const& thisClass = staticGetArchetype();" + env.getSeparator();
 
 	//Register the child to the subclasses list
-	inout_result += "if constexpr (!std::is_same_v<ChildClass, " + structClass.name + ">) const_cast<rfk::Struct&>(thisClass).addSubclass(childClass);" + env.getSeparator();
+	inout_result += "if constexpr (!std::is_same_v<ChildClass, " + structClass.name + ">)"
+		"const_cast<rfk::Struct&>(thisClass).addSubclass(childClass, rfk::internal::CodeGenerationHelpers::computeClassPointerOffset<ChildClass, " + structClass.name + ">());" + env.getSeparator();
+	inout_result += "else" + env.getSeparator() + 
+		"{" + env.getSeparator();
+
+	//Insert code here to reserve the correct amount of memory for fields and static fields
+	//The code is generated at the end of this method
+	std::size_t setFieldsCountInsertionOffset = inout_result.size();
+	std::size_t fieldsCount = 0u;
+	std::size_t staticFieldsCount = 0u;
+
+	inout_result += "}" + env.getSeparator();
 
 	//Make the child class inherit from the parents class fields
 	if (!structClass.fields.empty())
@@ -791,6 +918,8 @@ void ReflectionCodeGenModule::declareAndDefineRegisterChildClassMethod(kodgen::S
 		{
 			if (field.isStatic)
 			{
+				staticFieldsCount++;
+
 				inout_result += "staticField = childClass.addStaticField(\"" + field.name + "\", " +
 					(structClass.type.isTemplateType() ? computeClassTemplateEntityId(structClass, field) : computeClassNestedEntityId("ChildClass", field)) + ", " +
 					"rfk::getType<" + field.type.getName() + ">(), "
@@ -802,6 +931,8 @@ void ReflectionCodeGenModule::declareAndDefineRegisterChildClassMethod(kodgen::S
 			}
 			else
 			{
+				fieldsCount++;
+
 				inout_result += "field = childClass.addField(\"" + field.name + "\", " +
 					(structClass.type.isTemplateType() ? computeClassTemplateEntityId(structClass, field) : computeClassNestedEntityId("ChildClass", field)) + ", " +
 					"rfk::getType<" + field.type.getName() + ">(), "
@@ -830,42 +961,37 @@ void ReflectionCodeGenModule::declareAndDefineRegisterChildClassMethod(kodgen::S
 		}
 	}
 
+	//Propagate the child class registration to parent classes too
+	std::string inheritedFieldsCountExpression;
+	std::string inheritedStaticFieldsCountExpression;
+
+	if (!structClass.parents.empty())
+	{
+		for (kodgen::StructClassInfo::ParentInfo const& parent : structClass.parents)
+		{
+			inheritedFieldsCountExpression += "rfk::internal::CodeGenerationHelpers::getReflectedFieldsCount< " + parent.type.getName(true) + ">()+";
+			inheritedStaticFieldsCountExpression += "rfk::internal::CodeGenerationHelpers::getReflectedStaticFieldsCount< " + parent.type.getName(true) + ">()+";
+
+			inout_result += "rfk::internal::CodeGenerationHelpers::registerChildClass<" + parent.type.getName(true) + ", ChildClass>(childClass);" + env.getSeparator();
+		}
+
+		//Remove last + character
+		inheritedFieldsCountExpression.pop_back();
+		inheritedStaticFieldsCountExpression.pop_back();
+	}
+	else
+	{
+		inheritedFieldsCountExpression = "0";
+		inheritedStaticFieldsCountExpression = "0";
+	}
+
+	//Generate code to reserve right amount of memory for fields and static fields
+	std::string setFieldsCapacityGeneratedCode = "childClass.setFieldsCapacity(" + std::to_string(fieldsCount) + "u + " + inheritedFieldsCountExpression + "); ";
+	inout_result.insert(setFieldsCountInsertionOffset, setFieldsCapacityGeneratedCode); //fields
+	inout_result.insert(setFieldsCountInsertionOffset + setFieldsCapacityGeneratedCode.size(),
+						"childClass.setStaticFieldsCapacity(" + std::to_string(staticFieldsCount) + "u + " + inheritedStaticFieldsCountExpression + "); " + env.getSeparator()); //static fields
+	
 	inout_result += "}" + env.getSeparator() + env.getSeparator();
-}
-
-void ReflectionCodeGenModule::declareGetNestedEnumMethods(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) noexcept
-{
-	bool publicClass = isPublicClass(structClass);
-
-	for (kodgen::NestedEnumInfo const& nestedEnum : structClass.nestedEnums)
-	{
-		//Generate a method on non-public enums
-		//Public nested enums generated code is handled like non-nested enums
-		if (!publicClass || nestedEnum.accessSpecifier != kodgen::EAccessSpecifier::Public)
-		{
-			_nonPublicEnums.emplace(&nestedEnum);
-
-			beginHiddenGeneratedCode(env, inout_result);
-
-			inout_result += "private: static rfk::Enum const* " + computeGetNestedEnumMethodName(nestedEnum) + "() noexcept;" + env.getSeparator();
-
-			endHiddenGeneratedCode(env, inout_result);
-		}
-	}
-
-	inout_result += env.getSeparator();
-}
-
-void ReflectionCodeGenModule::defineGetNestedEnumMethods(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) noexcept
-{
-	for (kodgen::NestedEnumInfo const& nestedEnum : structClass.nestedEnums)
-	{
-		if (isRegisteredNonPublicEnum(nestedEnum))
-		{
-			inout_result += "rfk::Enum const* " + structClass.getFullName() + "::" + computeGetNestedEnumMethodName(nestedEnum) + "() noexcept" + env.getSeparator();
-			defineGetEnumContent(nestedEnum, env, inout_result);
-		}
-	}
 }
 
 void ReflectionCodeGenModule::declareAndDefineClassRegistererVariable(kodgen::StructClassInfo const& structClass, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
@@ -900,7 +1026,7 @@ void ReflectionCodeGenModule::declareAndDefineClassTemplateStaticGetArchetypeMet
 	fillClassFields(structClass, env, "type", inout_result);
 
 	//Set the default instantiator BEFORE filling the class methods since methods can overwrite the custom instantiator
-	setClassDefaultInstantiator(structClass, env, "type.", inout_result);
+	setClassDefaultInstantiators(structClass, env, "type.", inout_result);
 	fillClassMethods(structClass, env, "type.", inout_result);
 	fillClassNestedArchetypes(structClass, env, "type.", inout_result);
 
@@ -1183,32 +1309,21 @@ std::string ReflectionCodeGenModule::computeFullMethodPointerType(kodgen::Struct
 	return result;
 }
 
-bool ReflectionCodeGenModule::isRegisteredNonPublicEnum(kodgen::EnumInfo const& nestedEnum) const noexcept
-{
-	return _nonPublicEnums.find(&nestedEnum) != _nonPublicEnums.cend();
-}
-
 void ReflectionCodeGenModule::declareGetEnumTemplateSpecialization(kodgen::EnumInfo const& enum_, kodgen::MacroCodeGenEnv& env, std::string& inout_result) const noexcept
 {
 	//Don't generate template specialization code on non-public enums
 	//Code is generated by the outer class itself
-	if (!isRegisteredNonPublicEnum(enum_))
-	{
-		inout_result += "namespace rfk { template <> " + env.getExportSymbolMacro() + " rfk::Enum const* getEnum<" + enum_.type.getCanonicalName() + ">() noexcept; }" + env.getSeparator();
-	}
+	inout_result += "template <> " + env.getExportSymbolMacro() + " rfk::Enum const* rfk::getEnum<" + enum_.type.getCanonicalName() + ">() noexcept;" + env.getSeparator();
 }
 
 void ReflectionCodeGenModule::defineGetEnumTemplateSpecialization(kodgen::EnumInfo const& enum_, kodgen::MacroCodeGenEnv& env, std::string& inout_result) noexcept
 {
 	//Don't generate template specialization code on non-public enums
 	//Code is generated by the outer class itself
-	if (!isRegisteredNonPublicEnum(enum_))
-	{
-		std::string typeName = enum_.type.getCanonicalName();
+	std::string typeName = enum_.type.getCanonicalName();
 
-		inout_result += "template <> rfk::Enum const* rfk::getEnum<" + typeName + ">() noexcept" + env.getSeparator();
-		defineGetEnumContent(enum_, env, inout_result);
-	}
+	inout_result += "template <> rfk::Enum const* rfk::getEnum<" + typeName + ">() noexcept" + env.getSeparator();
+	defineGetEnumContent(enum_, env, inout_result);
 }
 
 void ReflectionCodeGenModule::defineGetEnumContent(kodgen::EnumInfo const& enum_, kodgen::MacroCodeGenEnv& env, std::string& inout_result) noexcept

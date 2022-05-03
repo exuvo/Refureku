@@ -1,5 +1,5 @@
 /**
-*	Copyright (c) 2021 Julien SOYSOUVANH - All Rights Reserved
+*	Copyright (c) 2021-2022 Julien SOYSOUVANH - All Rights Reserved
 *
 *	This file is part of the Refureku library project which is released under the MIT License.
 *	See the LICENSE.md file for full license details.
@@ -13,9 +13,14 @@
 #include "Refureku/TypeInfo/Archetypes/Enum.h"	//rfk::getEnum
 #include "Refureku/Misc/TypeTraitsMacros.h"
 
+#define RFK_DEFINE_GET_ARCHETYPE_TEMPLATE(...) namespace rfk { template <template <__VA_ARGS__> typename> Archetype const* getArchetype() noexcept { return nullptr; } }
+
 namespace rfk
 {
-	RFK_GENERATE_IS_CALLABLE_METHOD_TRAITS(staticGetArchetype)
+	namespace internal
+	{
+		RFK_GENERATE_IS_CALLABLE_METHOD_TRAITS(staticGetArchetype);
+	}
 
 	/**
 	*	@brief	Get the archetype of any type if it exists.

@@ -8,15 +8,13 @@
 #pragma once
 
 #include <array>
-#include <cstddef>	//std::size_t
+#include <cstddef>	//std::size_t, std::ptrdiff_t
 
 #include "Refureku/Config.h"
 #include "Refureku/Misc/TypeTraitsMacros.h"
 #include "Refureku/TypeInfo/Archetypes/GetArchetype.h"
 #include "Refureku/TypeInfo/Archetypes/Struct.h"
 #include "Refureku/Misc/SharedPtr.h"
-
-RFK_GENERATE_IMPLEMENTS_TEMPLATE1_METHOD_TRAITS(_rfk_registerChildClass)
 
 #ifndef _RFK_UNPACK_IF_NOT_PARSING
 
@@ -32,6 +30,8 @@ RFK_GENERATE_IMPLEMENTS_TEMPLATE1_METHOD_TRAITS(_rfk_registerChildClass)
 
 namespace rfk::internal
 {
+	RFK_GENERATE_IMPLEMENTS_TEMPLATE1_METHOD_TRAITS(_rfk_registerChildClass);
+
 	class CodeGenerationHelpers
 	{
 		public:
@@ -45,7 +45,36 @@ namespace rfk::internal
 			*	@param	childClass The child class to register.
 			*/
 			template <typename ParentClass, typename ChildClass>
-			static constexpr void					registerChildClass(rfk::Struct& childClass)	noexcept;
+			static constexpr void							registerChildClass(rfk::Struct& childClass)	noexcept;
+
+			/**
+			*	@brief	Compute the pointer difference to transform a Derived pointer into a Base pointer.
+			* 
+			*	@tparam	Derived The derived class.
+			*	@tparam Base	The base class.
+			*/
+			template <typename Derived, typename Base>
+			RFK_NODISCARD static constexpr std::ptrdiff_t	computeClassPointerOffset()					noexcept;
+
+			/**
+			*	@brief	Retrieve the number of reflected fields of the provided class.
+			* 
+			*	@tparam ClassType Type of the class.
+			* 
+			*	@return The number of reflected fields in the class when the method is called. If the class is not reflected, return 0.
+			*/
+			template <typename ClassType>
+			RFK_NODISCARD static std::size_t				getReflectedFieldsCount()					noexcept;
+
+			/**
+			*	@brief	Retrieve the number of reflected static fields of the provided class.
+			* 
+			*	@tparam ClassType Type of the class.
+			* 
+			*	@return The number of reflected static fields in the class when the method is called. If the class is not reflected, return 0.
+			*/
+			template <typename ClassType>
+			RFK_NODISCARD static std::size_t				getReflectedStaticFieldsCount()				noexcept;
 
 			/**
 			*	@brief	Instantiate a class if it is default constructible.
@@ -62,6 +91,23 @@ namespace rfk::internal
 #else
 			template <typename T>
 			RFK_NODISCARD static rfk::SharedPtr<T>	defaultSharedInstantiator() noexcept(!std::is_default_constructible_v<T> || std::is_nothrow_constructible_v<T>);
+#endif
+
+			/**
+			*	@brief	Instantiate a class if it is default constructible.
+			*			This is the default method used to instantiate classes through Struct::makeUniqueInstance.
+			*	
+			*	@return A pointer to a newly allocated instance of the class if the class is default constructible, else nullptr.
+			* 
+			*	@exception Potential exception thrown by T constructor.
+			*/
+#if defined(__GNUC__) && !defined (__clang__) && __GNUC__ <= 9
+			//Handle pre GCC 9 internal compiler error when using type traits in noexcept
+			template <typename T>
+			RFK_NODISCARD static rfk::UniquePtr<T>	defaultUniqueInstantiator();
+#else
+			template <typename T>
+			RFK_NODISCARD static rfk::UniquePtr<T>	defaultUniqueInstantiator() noexcept(!std::is_default_constructible_v<T> || std::is_nothrow_constructible_v<T>);
 #endif
 	};
 

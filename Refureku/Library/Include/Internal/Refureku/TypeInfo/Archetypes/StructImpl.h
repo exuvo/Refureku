@@ -8,9 +8,12 @@
 #pragma once
 
 #include <unordered_set>
+#include <unordered_map>
+#include <cstddef> //std::ptrdiff_t
 #include <cassert>
 
 #include "Refureku/TypeInfo/Archetypes/Struct.h"
+#include "Refureku/TypeInfo/Archetypes/SubclassData.h"
 #include "Refureku/TypeInfo/Archetypes/ParentStruct.h"
 #include "Refureku/TypeInfo/Archetypes/ArchetypeImpl.h"
 #include "Refureku/TypeInfo/Entity/EntityHash.h"
@@ -26,7 +29,7 @@ namespace rfk
 	{
 		public:
 			using ParentStructs		= std::vector<ParentStruct>;
-			using Subclasses		= std::unordered_set<Struct const*>;
+			using Subclasses		= std::unordered_map<Struct const*, SubclassData>;
 			using NestedArchetypes	= std::unordered_set<Archetype const*, EntityPtrNameHash, EntityPtrNameEqual>;
 			using Fields			= std::unordered_multiset<Field, EntityNameHash, EntityNameEqual>;
 			using StaticFields		= std::unordered_multiset<StaticField, EntityNameHash, EntityNameEqual>;
@@ -56,8 +59,11 @@ namespace rfk
 			/** All reflected static methods declared in this struct. */
 			StaticMethods		_staticMethods;
 
-			/** List of all custom instantiators for this archetype. */
-			Instantiators		_instantiators;
+			/** List of all custom instantiators returning rfk::SharedPtr for this archetype. */
+			Instantiators		_sharedInstantiators;
+
+			/** List of all custom instantiators returning rfk::UniquePtr for this archetype. */
+			Instantiators		_uniqueInstantiators;
 
 			/** Kind of a rfk::Struct or rfk::Class instance. */
 			EClassKind			_classKind;
@@ -124,15 +130,31 @@ namespace rfk
 			*	@param archetype			Archetype of the parent struct/class.
 			*	@param inheritanceAccess	The inheritance access for the provided parent.
 			*/
-			inline void									addDirectParent(Struct const& archetype,
+			inline void									addDirectParent(Struct const&	 archetype,
 																		EAccessSpecifier inheritanceAccess)				noexcept;
+
+			/**
+			*	@brief Remove an archetype from the directParent collection at the provided index.
+			* 
+			*	@param parentIndex The index of the parent to remove in the directParents collection.
+			*/
+			inline void									removeDirectParentAt(std::size_t parentIndex)					noexcept;
 
 			/**
 			*	@brief Add a subclass to this struct.
 			* 
-			*	@param subclass The subclass to add.
+			*	@param subclass				 The subclass to add.
+			*	@param subclassPointerOffset Memory offset to add to a subclass instance pointer to obtain a valid pointer to this base struct.
 			*/
-			inline void									addSubclass(Struct const& subclass)								noexcept;
+			inline void									addSubclass(Struct const&  subclass, 
+																	std::ptrdiff_t subclassPointerOffset)				noexcept;
+
+			/**
+			*	@brief Remove a subclass from this Struct.
+			* 
+			*	@param subclass The subclass to remove.
+			*/
+			inline void									removeSubclassRecursive(rfk::Struct const& subclass)			noexcept;
 
 			/**
 			*	@brief Add a nested archetype to the struct.
@@ -234,12 +256,20 @@ namespace rfk
 																		Struct const*	outerEntity)					noexcept;
 
 			/**
-			*	@brief	Add a new way to instantiate this struct through the makeInstance method.
-			*			If the provided static method takes no parameter, it will override the default instantiator.
+			*	@brief	Add a new way to instantiate this struct through the makeSharedInstance method.
+			*			If the provided static method takes no parameter, it will override the default shared instantiator.
 			*	
 			*	@param instantiator Pointer to the static method.
 			*/
-			inline void									addInstantiator(StaticMethod const& instantiator)				noexcept;
+			inline void									addSharedInstantiator(StaticMethod const& instantiator)			noexcept;
+
+			/**
+			*	@brief	Add a new way to instantiate this struct through the makeUniqueInstance (and makeSharedInstance) method.
+			*			If the provided static method takes no parameter, it will override the default unique instantiator.
+			*	
+			*	@param instantiator Pointer to the static method.
+			*/
+			inline void									addUniqueInstantiator(StaticMethod const& instantiator)			noexcept;
 
 			/**
 			*	@brief Get a nested archetype by name / access specifier.
@@ -251,6 +281,18 @@ namespace rfk
 			*/
 			RFK_NODISCARD inline Archetype const*		getNestedArchetype(char const*		name,
 																		   EAccessSpecifier	access)				const	noexcept;
+
+			/**
+			*	@brief	Get the pointer offset to transform an instance pointer of this Struct to a to instance pointer.
+			*			This method only looks in its own subclasses metadata, so if to is not a subclass of this, false is returned.
+			* 
+			*	@param to				 Struct metadata of the target struct.
+			*	@param out_pointerOffset The resulting pointer offset if found.
+			* 
+			*	@return true if the pointer offset was found (out_pointerOffset contains the result), else false.
+			*/
+			RFK_NODISCARD inline bool					getPointerOffset(Struct const&	 to,
+																		 std::ptrdiff_t& out_pointerOffset)		const	noexcept;
 
 			/**
 			*	@brief Getter for the field _directParents.
@@ -302,11 +344,18 @@ namespace rfk
 			RFK_NODISCARD inline StaticMethods const&		getStaticMethods()									const	noexcept;
 
 			/**
-			*	@brief Getter for the field _instantiators.
+			*	@brief Getter for the field _sharedInstantiators.
 			* 
-			*	@return _instantiators.
+			*	@return _sharedInstantiators.
 			*/
-			RFK_NODISCARD inline Instantiators const&		getInstantiators()									const	noexcept;
+			RFK_NODISCARD inline Instantiators const&		getSharedInstantiators()							const	noexcept;
+
+			/**
+			*	@brief Getter for the field _uniqueInstantiators.
+			* 
+			*	@return _uniqueInstantiators.
+			*/
+			RFK_NODISCARD inline Instantiators const&		getUniqueInstantiators()							const	noexcept;
 
 			/**
 			*	@brief Getter for the field _classKind.

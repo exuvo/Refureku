@@ -7,15 +7,19 @@
 
 #pragma once
 
+#include <cstddef> //std::ptrdiff_t
 #include <type_traits> //std::is_default_constructible_v, std::is_pointer_v, std::is_reference_v
 
+#include "Refureku/TypeInfo/Cast.h"
 #include "Refureku/TypeInfo/Archetypes/Archetype.h"
-#include "Refureku/TypeInfo/Functions/StaticMethod.h"	//makeInstance<> uses StaticMethod wrapper so must include
+#include "Refureku/TypeInfo/Functions/StaticMethod.h"	//make[Unique/Shared]Instance<> uses StaticMethod wrapper so must include
 #include "Refureku/TypeInfo/Archetypes/EClassKind.h"
 #include "Refureku/TypeInfo/Variables/EFieldFlags.h"
 #include "Refureku/TypeInfo/Functions/EMethodFlags.h"
 #include "Refureku/TypeInfo/Functions/MethodHelper.h"
+#include "Refureku/Containers/Vector.h"
 #include "Refureku/Misc/SharedPtr.h"
+#include "Refureku/Misc/UniquePtr.h"
 
 namespace rfk
 {
@@ -46,12 +50,28 @@ namespace rfk
 			*			One can add new instantiators to any class by using the Instantiator method property.
 			*
 			*	@return An instance of this struct if a suitable instantiator was found, else nullptr.
+			*			This method can use both instantiators returning rfk::SharedPtr and rfk::UniquePtr.
+			*			However, make a shared instance through a unique instantiator has a slightly higher performance impact
+			*			since a unique ptr is created and then moved to construct the returned shared ptr.
 			* 
 			*	@exception Any exception potentially thrown by the used instantiator.
 			*/
 			template <typename ReturnType, typename... ArgTypes>
 			RFK_NODISCARD 
 				rfk::SharedPtr<ReturnType>			makeSharedInstance(ArgTypes&&... args)												const;
+
+			/**
+			*	@brief	Make an instance of the class represented by this archetype with the matching instantiator.
+			*			One can add new instantiators to any class by using the Instantiator method property.
+			*
+			*	@return An instance of this struct if a suitable instantiator was found, else nullptr.
+			*			This method can only use instantiators returning rfk::UniquePtr.
+			* 
+			*	@exception Any exception potentially thrown by the used instantiator.
+			*/
+			template <typename ReturnType, typename... ArgTypes>
+			RFK_NODISCARD 
+				rfk::UniquePtr<ReturnType>			makeUniqueInstance(ArgTypes&&... args)												const;
 
 			/**
 			*	@brief	Compute the list of all direct reflected subclasses of this struct.
@@ -289,6 +309,7 @@ namespace rfk
 			*	@param userData					User data forwarded to the predicate calls.
 			*	@param shouldInspectInherited	Should inherited fields be considered as well in the search process?
 			*										If false, only fields introduced by this struct will be considered.
+			*	@param orderedByDeclaration		Should fields be ordered by declaration order in the result collection?
 			* 
 			*	@return All fields satisfying the predicate.
 			* 
@@ -297,7 +318,8 @@ namespace rfk
 			RFK_NODISCARD REFUREKU_API 
 				Vector<Field const*>				getFieldsByPredicate(Predicate<Field>	predicate,
 																		 void*				userData,
-																		 bool				shouldInspectInherited = false)				const;
+																		 bool				shouldInspectInherited = false,
+																		 bool				orderedByDeclaration = false)				const;
 
 			/**
 			*	@brief Execute the given visitor on all fields in this struct.
@@ -623,6 +645,28 @@ namespace rfk
 			RFK_NODISCARD REFUREKU_API EClassKind	getClassKind()																		const	noexcept;
 
 			/**
+			*	@brief	Get the pointer offset to transform an instance of this Struct pointer to a pointer of the provided Struct.
+			*			Search in both directions (whether to is a parent class or a child class).
+			* 
+			*	@param to				 Struct metadata of the target struct.
+			*	@param out_pointerOffset The resulting pointer offset if found.
+			* 
+			*	@return true if the pointer offset was found (out_pointerOffset contains the result), else false.
+			*/
+			RFK_NODISCARD REFUREKU_API bool			getPointerOffset(Struct const& to, std::ptrdiff_t& out_pointerOffset)				const	noexcept;
+
+			/**
+			*	@brief	Get the pointer offset to transform an instance of this Struct pointer to a pointer of the provided Struct.
+			*			Only search the offset in this struct subclasses. If to is a parent of this struct, false will be returned.
+			* 
+			*	@param to				 Struct metadata of the target struct.
+			*	@param out_pointerOffset The resulting pointer offset if found.
+			* 
+			*	@return true if the pointer offset was found (out_pointerOffset contains the result), else false.
+			*/
+			RFK_NODISCARD REFUREKU_API bool			getSubclassPointerOffset(Struct const& to, std::ptrdiff_t& out_pointerOffset)		const	noexcept;
+
+			/**
 			*	@brief Add a parent to this struct if the provided archetype is a valid struct/class.
 			* 
 			*	@param archetype			Archetype of the parent struct/class.
@@ -643,9 +687,11 @@ namespace rfk
 			/**
 			*	@brief Add a subclass to this struct.
 			* 
-			*	@param subclass The subclass to add.
+			*	@param subclass					The subclass to add.
+			*	@param subclassPointerOffset	Memory offset to add to a subclass instance pointer to obtain a valid pointer to this base struct.
 			*/
-			REFUREKU_API void						addSubclass(Struct const& subclass)															noexcept;
+			REFUREKU_API void						addSubclass(Struct const&  subclass,
+																std::ptrdiff_t subclassPointerOffset)											noexcept;
 
 			/**
 			*	@brief Add a nested archetype to the struct.
@@ -789,6 +835,15 @@ namespace rfk
 			*/
 			REFUREKU_API void						addSharedInstantiator(StaticMethod const& instantiator)										noexcept;
 
+			/**
+			*	@brief	Add a new way to instantiate this struct through the makeUniqueInstance method.
+			*			The passed static method MUST return a rfk::UniquePtr<StructType>. Otherwise, the behaviour is undefined
+			*			when calling Struct::makeUniqueInstance.
+			*	
+			*	@param instantiator Pointer to the static method.
+			*/
+			REFUREKU_API void						addUniqueInstantiator(StaticMethod const& instantiator)										noexcept;
+
 		protected:
 			//Forward declaration
 			class StructImpl;
@@ -804,7 +859,7 @@ namespace rfk
 
 		private:
 			/**
-			*	@brief Execute the given visitor on all instantiators taking a given number of parameters in this struct.
+			*	@brief Execute the given visitor on all shared instantiators taking a given number of parameters in this struct.
 			* 
 			*	@param argCount	Number of arguments the instantiator takes.
 			*	@param visitor	Visitor function to call. Return false to abort the foreach loop.
@@ -815,9 +870,25 @@ namespace rfk
 			* 
 			*	@exception Any exception potentially thrown from the provided visitor.
 			*/
-			REFUREKU_API bool	foreachInstantiator(std::size_t				argCount,
-													Visitor<StaticMethod>	visitor,
-													void*					userData)	const;
+			REFUREKU_API bool	foreachSharedInstantiator(std::size_t			argCount,
+														  Visitor<StaticMethod>	visitor,
+														  void*					userData)	const;
+
+			/**
+			*	@brief Execute the given visitor on all unique instantiators taking a given number of parameters in this struct.
+			* 
+			*	@param argCount	Number of arguments the instantiator takes.
+			*	@param visitor	Visitor function to call. Return false to abort the foreach loop.
+			*	@param userData	Optional user data forwarded to the visitor.
+			* 
+			*	@return	The last visitor result before exiting the loop.
+			*			If the visitor is nullptr, return false.
+			* 
+			*	@exception Any exception potentially thrown from the provided visitor.
+			*/
+			REFUREKU_API bool	foreachUniqueInstantiator(std::size_t			argCount,
+														  Visitor<StaticMethod>	visitor,
+														  void*					userData)	const;
 	};
 
 	REFUREKU_TEMPLATE_API(rfk::Allocator<Struct const*>);

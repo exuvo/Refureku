@@ -19,6 +19,37 @@ constexpr void CodeGenerationHelpers::registerChildClass(rfk::Struct& childClass
 	}
 }
 
+template <typename Derived, typename Base>
+constexpr std::ptrdiff_t CodeGenerationHelpers::computeClassPointerOffset() noexcept
+{
+	static_assert(std::is_base_of_v<Base, Derived>, "Derived must be in Base inheritance tree (or must be Base itself).");
+
+	Derived* derivedPtr = reinterpret_cast<Derived*>(1);
+	Base* basePtr = static_cast<Base*>(derivedPtr);
+
+	return reinterpret_cast<std::intptr_t>(basePtr) - reinterpret_cast<std::intptr_t>(derivedPtr);
+}
+
+template <typename ClassType>
+std::size_t CodeGenerationHelpers::getReflectedFieldsCount() noexcept
+{
+	static_assert(std::is_class_v<ClassType>, "getReflectedFieldsCount template argument must be a class.");
+
+	rfk::Struct const* archetype = reinterpret_cast<rfk::Struct const*>(rfk::getArchetype<ClassType>());
+
+	return (archetype != nullptr) ? archetype->getFieldsCount() : 0u;
+}
+
+template <typename ClassType>
+std::size_t CodeGenerationHelpers::getReflectedStaticFieldsCount() noexcept
+{
+	static_assert(std::is_class_v<ClassType>, "getReflectedStaticFieldsCount template argument must be a class.");
+
+	rfk::Struct const* archetype = reinterpret_cast<rfk::Struct const*>(rfk::getArchetype<ClassType>());
+
+	return (archetype != nullptr) ? archetype->getStaticFieldsCount() : 0u;
+}
+
 template <typename T>
 rfk::SharedPtr<T> CodeGenerationHelpers::defaultSharedInstantiator()
 #if !defined(__GNUC__) || defined (__clang__) || __GNUC__ > 9
@@ -28,6 +59,22 @@ rfk::SharedPtr<T> CodeGenerationHelpers::defaultSharedInstantiator()
 	if constexpr (std::is_default_constructible_v<T>)
 	{
 		return rfk::makeShared<T>();
+	}
+	else
+	{
+		return nullptr;
+	}
+}
+
+template <typename T>
+rfk::UniquePtr<T> CodeGenerationHelpers::defaultUniqueInstantiator()
+#if !defined(__GNUC__) || defined (__clang__) || __GNUC__ > 9
+noexcept(!std::is_default_constructible_v<T> || std::is_nothrow_constructible_v<T>)
+#endif
+{
+	if constexpr (std::is_default_constructible_v<T>)
+	{
+		return rfk::makeUnique<T>();
 	}
 	else
 	{

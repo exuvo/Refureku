@@ -58,6 +58,18 @@ namespace rfk
 			void		copyElements(T const*	 from,
 									 T*			 to,
 									 std::size_t count);
+
+			/**
+			*	@brief	Copy count elements from from into to.
+			*			Copy elements in reverse order, starting from the last element of from and finishing with the first element of from.
+			* 
+			*	@param from		Address of the source first element to copy.
+			*	@param to		Address of the target first element receiving the copy.
+			*	@param count	Number of elements to copy.
+			*/
+			void		copyElementsReverse(T const*	from,
+											T*			to,
+											std::size_t count);
 			
 			/**
 			*	@brief Move count elements from from into to.
@@ -69,6 +81,18 @@ namespace rfk
 			void		moveElements(T*			 from,
 									 T*			 to,
 									 std::size_t count);
+
+			/**
+			*	@brief	Move count elements from from into to.
+			*			Move elements in reverse order, starting from the last element of from and finishing with the first element of from.
+			* 
+			*	@param from		Address of the source first element to move.
+			*	@param to		Address of the target first element receiving the move.
+			*	@param count	Number of elements to move.
+			*/
+			void		moveElementsReverse(T*			from,
+											T*			to,
+											std::size_t count);
 
 			/**
 			*	@brief Destroy manually count elements from from.
@@ -93,6 +117,17 @@ namespace rfk
 			void		reallocateIfNecessary(std::size_t minCapacity);
 
 			/**
+			*	@brief	Open free space for future elements at the provided index.
+			*			Elements before the provided don't move, and elements after index are moved at index + count.
+			*			If there's not enough capacity, the underlying memory is reallocated.
+			* 
+			*	@param index Starting index for free space.
+			*	@param count Number of elements that should be able to fit from index.
+			*/
+			void		makeFreeSpaceForXElements(std::size_t index,
+												  std::size_t count);
+
+			/**
 			*	@brief	Compute the new capacity of the vector using the _growthFactor.
 			* 
 			*	@param minCapacity The minimum capacity that should be allocated.
@@ -100,6 +135,11 @@ namespace rfk
 			std::size_t	computeNewCapacity(std::size_t minCapacity)	const noexcept;
 
 		public:
+			using value_type = T;
+			using allocator_type = Allocator;
+			using reference = value_type&;
+			using const_reference = value_type const&;
+			
 			Vector(std::size_t initialCapacity = 0u)	noexcept;
 
 			/** Retrieve data from another type U. NOT SAFE UNLESS YOU EXACTLY KNOW WHAT YOU DO. */
@@ -200,6 +240,24 @@ namespace rfk
 			*/
 			void		push_back(Vector const& other);
 			void		push_back(Vector&& other);
+
+			/**
+			*	@brief Insert an element at a specified index.
+			* 
+			*	@param index	Index of the element in the vector.
+			*	@param element	Element to insert.
+			*/
+			void		insert(std::size_t	index,
+							   T const&		element);
+
+			/**
+			*	@brief Insert an element at a specified index.
+			* 
+			*	@param index	Index of the element in the vector.
+			*	@param element	Element to insert.
+			*/
+			void		insert(std::size_t	index,
+							   T&&			element);
 
 			/**
 			*	@brief Construct in place an element at the end of the vector with the provided arguments.

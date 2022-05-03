@@ -14,6 +14,7 @@ __RFK_DISABLE_WARNING_UNUSED_RESULT
 #include "FunctionTests.cpp"
 #include "MethodBaseTests.cpp"
 #include "MethodTests.cpp"
+#include "CastTests.cpp"
 #include "StaticMethodTests.cpp"
 #include "FieldBaseTests.cpp"
 #include "VariableTests.cpp"
@@ -26,6 +27,9 @@ __RFK_DISABLE_WARNING_UNUSED_RESULT
 #include "EntityCastTests.cpp"
 #include "DatabaseTests.cpp"
 #include "ManualReflectionTests.cpp"
+#include "InstantiatorTests.cpp"
+#include "NestedClassTests.cpp"
+#include "NestedEnumTests.cpp"
 
 __RFK_DISABLE_WARNING_POP
 

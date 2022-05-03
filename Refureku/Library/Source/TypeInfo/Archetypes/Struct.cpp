@@ -24,13 +24,50 @@ Struct::Struct(StructImpl* implementation) noexcept:
 {
 }
 
-Struct::~Struct() noexcept = default;
+Struct::~Struct() noexcept
+{
+	//Unregister this class from subclasses direct parents
+	std::size_t i = 0u;
+	for (auto [subclass, subclassData] : getPimpl()->getSubclasses())
+	{
+		//Search this struct in subclasses's parents
+		i = 0u;
+		for (ParentStruct const& subclassParent : subclass->getPimpl()->getDirectParents())
+		{
+			if (&subclassParent.getArchetype() == this)
+			{
+				//Found a subclass that has this Struct as a direct parent
+				const_cast<Struct*>(subclass)->getPimpl()->removeDirectParentAt(i);
+				break;
+			}
+
+			i++;
+		}
+
+		//Unregister this struct subclasses from upper class hierarchy
+		Struct const* subclassLValue = subclass;
+		Algorithm::foreach(getPimpl()->getDirectParents(), [subclassLValue](ParentStruct const& parent)
+						   {
+							   const_cast<Struct&>(parent.getArchetype()).getPimpl()->removeSubclassRecursive(*subclassLValue);
+
+							   return true;
+						   });
+	}
+
+	//Unregister this class from upper class hierarchy subclasses
+	Algorithm::foreach(getPimpl()->getDirectParents(), [this](ParentStruct const& parent)
+					   {
+						   const_cast<Struct&>(parent.getArchetype()).getPimpl()->removeSubclassRecursive(*this);
+
+						   return true;
+					   });
+}
 
 rfk::Vector<Struct const*> Struct::getDirectSubclasses() const noexcept
 {
 	rfk::Vector<Struct const*> result;
 
-	for (Struct const* subclass : getPimpl()->getSubclasses())
+	for (auto [subclass, subclassData] : getPimpl()->getSubclasses())
 	{
 		//Search this struct in subclasses's parents
 		for (ParentStruct const& subclassParent : subclass->getPimpl()->getDirectParents())
@@ -61,6 +98,35 @@ bool Struct::isBaseOf(Struct const& archetype) const noexcept
 EClassKind Struct::getClassKind() const noexcept
 {
 	return getPimpl()->getClassKind();
+}
+
+bool Struct::getPointerOffset(Struct const& to, std::ptrdiff_t& out_pointerOffset) const noexcept
+{
+	//This method is used for downcast in most cases, so search in the parent first.
+	//In the case of a downcast, this is likely the parent struct and to the child one
+	if (getPimpl()->getPointerOffset(to, out_pointerOffset))
+	{
+		return true;
+	}
+	//Try the other way around
+	else if (to.getPimpl()->getPointerOffset(*this, out_pointerOffset))
+	{
+		//Invert the offset to switch from
+		//to -> this offset
+		//to
+		//this -> to offset
+		out_pointerOffset = -out_pointerOffset;
+
+		return true;
+	}
+	
+	//this Struct and to Struct do not belong to the same inheritance tree
+	return false;
+}
+
+bool Struct::getSubclassPointerOffset(Struct const& to, std::ptrdiff_t& out_pointerOffset) const noexcept
+{
+	return getPimpl()->getPointerOffset(to, out_pointerOffset);
 }
 
 ParentStruct const& Struct::getDirectParentAt(std::size_t index) const noexcept
@@ -236,17 +302,37 @@ Field const* Struct::getFieldByPredicate(Predicate<Field> predicate, void* userD
 		}) : nullptr;
 }
 
-Vector<Field const*> Struct::getFieldsByPredicate(Predicate<Field> predicate, void* userData, bool shouldInspectInherited) const
+Vector<Field const*> Struct::getFieldsByPredicate(Predicate<Field> predicate, void* userData, bool shouldInspectInherited, bool orderedByDeclaration) const
 {
 	if (predicate != nullptr)
 	{
-		return Algorithm::getItemsByPredicate(getPimpl()->getFields(),
-													 [this, predicate, userData, shouldInspectInherited](Field const& field)
-													 {
-														 return	field.getKind() == EEntityKind::Field &&
+		if (orderedByDeclaration)
+		{
+			return Algorithm::getSortedItemsByPredicate(getPimpl()->getFields(),
+														[this, predicate, userData, shouldInspectInherited](Field const& field)
+														{
+															return	field.getKind() == EEntityKind::Field &&
 																(shouldInspectInherited || field.getOuterEntity() == this) &&
 																predicate(static_cast<Field const&>(field), userData);
-													 });
+														},
+														[](Field const* a, Field const* b)
+														{
+															//Two fields contained in the same struct should never have the same memory offset
+															assert(a->getMemoryOffset() != b->getMemoryOffset());
+
+															return a->getMemoryOffset() < b->getMemoryOffset();
+														});
+		}
+		else
+		{
+			return Algorithm::getItemsByPredicate(getPimpl()->getFields(),
+												  [this, predicate, userData, shouldInspectInherited](Field const& field)
+												  {
+													  return	field.getKind() == EEntityKind::Field &&
+														  (shouldInspectInherited || field.getOuterEntity() == this) &&
+														  predicate(static_cast<Field const&>(field), userData);
+												  });
+		}
 	}
 	else
 	{
@@ -646,9 +732,9 @@ void Struct::setDirectParentsCapacity(std::size_t capacity) noexcept
 	getPimpl()->setDirectParentsCapacity(capacity);
 }
 
-void Struct::addSubclass(Struct const& subclass) noexcept
+void Struct::addSubclass(Struct const& subclass, std::ptrdiff_t subclassPointerOffset) noexcept
 {
-	getPimpl()->addSubclass(subclass);
+	getPimpl()->addSubclass(subclass, subclassPointerOffset);
 }
 
 void Struct::addNestedArchetype(Archetype const* nestedArchetype, EAccessSpecifier accessSpecifier) noexcept
@@ -715,11 +801,11 @@ void Struct::setStaticMethodsCapacity(std::size_t capacity) noexcept
 }
 
 
-bool Struct::foreachInstantiator(std::size_t argCount, Visitor<StaticMethod> visitor, void* userData) const
+bool Struct::foreachSharedInstantiator(std::size_t argCount, Visitor<StaticMethod> visitor, void* userData) const
 {
 	bool result = true;
 
-	Algorithm::foreach(getPimpl()->getInstantiators(), [&result, argCount, visitor, userData](StaticMethod const& instantiator)
+	Algorithm::foreach(getPimpl()->getSharedInstantiators(), [&result, argCount, visitor, userData](StaticMethod const& instantiator)
 					   {
 							std::size_t instantiatorParamCounts = instantiator.getParametersCount();
 
@@ -746,7 +832,43 @@ bool Struct::foreachInstantiator(std::size_t argCount, Visitor<StaticMethod> vis
 	return result;
 }
 
+bool Struct::foreachUniqueInstantiator(std::size_t argCount, Visitor<StaticMethod> visitor, void* userData) const
+{
+	bool result = true;
+
+	Algorithm::foreach(getPimpl()->getUniqueInstantiators(), [&result, argCount, visitor, userData](StaticMethod const& instantiator)
+					   {
+						   std::size_t instantiatorParamCounts = instantiator.getParametersCount();
+
+						   //Instantiators are ordered by ascending param counts, so skip all
+						   //instantiators having less than the required arg count
+						   if (instantiatorParamCounts < argCount)
+						   {
+							   return true;
+						   }
+						   else if (instantiatorParamCounts == argCount)
+						   {
+							   //Run the visitor on each instantiator having the same arg count
+							   result = visitor(instantiator, userData);
+							   return result;
+						   }
+						   else //instantiatorParamCounts > argCount
+						   {
+							   //Abort the foreach loop once we reach elements that have a greater
+							   //arg count
+							   return false;
+						   }
+					   });
+
+	return result;
+}
+
 void Struct::addSharedInstantiator(StaticMethod const& instantiator) noexcept
 {
-	getPimpl()->addInstantiator(instantiator);
+	getPimpl()->addSharedInstantiator(instantiator);
+}
+
+void Struct::addUniqueInstantiator(StaticMethod const& instantiator) noexcept
+{
+	getPimpl()->addUniqueInstantiator(instantiator);
 }
