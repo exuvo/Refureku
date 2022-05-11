@@ -22,12 +22,12 @@ std::size_t	Field::getMemoryOffset() const noexcept
 	return getPimpl()->getMemoryOffset();
 }
 
-void Field::setInternal(void* instance, void const* valuePtr, std::size_t valueSize) const
+void Field::setUnsafe(void* instance, void const* valuePtr, std::size_t valueSize) const
 {
-	FieldBase::set(getPtrInternal(instance), valuePtr, valueSize);
+	FieldBase::set(getPtrUnsafe(instance), valuePtr, valueSize);
 }
 
-void* Field::getPtrInternal(void* instance) const
+void* Field::getPtrUnsafe(void* instance) const
 {
 	if (getType().isConst())
 	{
@@ -37,7 +37,7 @@ void* Field::getPtrInternal(void* instance) const
 	return reinterpret_cast<uint8_t*>(instance) + getMemoryOffset();
 }
 
-void const* Field::getConstPtrInternal(void const* instance) const noexcept
+void const* Field::getConstPtrUnsafe(void const* instance) const noexcept
 {
 	return reinterpret_cast<uint8_t const*>(instance) + getMemoryOffset();
 }

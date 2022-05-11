@@ -63,6 +63,57 @@ namespace rfk
 			RFK_NODISCARD ValueType		get(OwnerStructType const& instance)			const;
 
 			/**
+			*	@brief Get the value corresponding to this field in the provided instance.
+			*		   This method in not safe if you provide a wrong ValueType.
+			*		   This method DOES NOT perform any pointer adjustment on the provided instance so it is unsafe if instance
+			*		   is not a valid pointer to an object of the field's owner archetype.
+			*		   Prefer using Field::get for safety if you know the static type of your instance in the calling context.
+			*
+			*	@note Since this method doesn't perform any pointer adjustment, it is slightly faster than Field::get.
+			* 
+			*	@tparam ValueType Type to retrieve from the field.
+			*		If ValueType is an rvalue reference, the field value is moved into the return value (so the field value is no longer safe to use).
+			*		If ValueType is an lvalue reference, return a reference to the field.
+			*		If ValueType is a value type, the value is copied. If it is a class, ValueType must be copy-constructible.
+			*
+			*	@param instance Instance we retrieve the value from.
+			* 
+			*	@exception ConstViolation if:
+			*		- the field is const and ValueType is an RValue type (can't move a const field content);
+			*		- the field is const and ValueType is a non-const reference;
+			*
+			*	@return The queried value in the instance.
+			*/
+			template <typename ValueType>
+			RFK_NODISCARD ValueType		getUnsafe(void* instance)						const;
+
+			/**
+			*	@brief Get the value corresponding to this field in the provided instance.
+			*		   This method in not safe if you provide a wrong ValueType.
+			*		   This method DOES NOT perform any pointer adjustment on the provided instance so it is unsafe if instance
+			*		   is not a valid pointer to an object of the field's owner archetype.
+			*		   Prefer using Field::get for safety if you know the static type of your instance in the calling context.
+			*
+			*	@note This is only an overload of the same method with a const instance.
+			*		  Since this method doesn't perform any pointer adjustment, it is slightly faster than Field::get.
+			* 
+			*	@tparam ValueType Type to retrieve from the field.
+			*		If ValueType is an rvalue reference, the field value is moved into the return value (so the field value is no longer safe to use).
+			*		If ValueType is an lvalue reference, return a reference to the field.
+			*		If ValueType is a value type, the value is copied. If it is a class, ValueType must be copy-constructible.
+			*
+			*	@param instance Instance we retrieve the value from.
+			* 
+			*	@exception ConstViolation if:
+			*		- the field is const and ValueType is an RValue type (can't move a const field content);
+			*		- the field is const and ValueType is a non-const reference;
+			*
+			*	@return The queried value in the instance.
+			*/
+			template <typename ValueType>
+			RFK_NODISCARD ValueType		getUnsafe(void const* instance)					const;
+
+			/**
 			*	@brief Set the value corresponding to this field in the provided instance.
 			*		   This method is not safe if you provide a wrong ValueType.
 			*
@@ -94,6 +145,39 @@ namespace rfk
 											std::size_t			valueSize)				const;
 
 			/**
+			*	@brief Set the value corresponding to this field in the provided instance.
+			*		   This method is not safe if you provide a wrong ValueType.
+			*		   This method DOES NOT perform any pointer adjustment on the provided instance so it is unsafe if instance
+			*		   is not a valid pointer to an object of the field's owner archetype.
+			*		   Prefer using Field::set for safety if you know the static type of your instance in the calling context.
+			*
+			*	@tparam ValueType Type to write into the field.
+			*		If ValueType is an rvalue reference, the value is forwarded into the instance.
+			*		If ValueType is an lvalue reference, the value is copied into the instance.
+			*
+			*	@param instance Instance we set the value in.
+			*	@param value Data to set in the instance.
+			* 
+			*	@exception ConstViolation if the field is actually const and therefore readonly.
+			*/
+			template <typename ValueType>
+			void						setUnsafe(void*			instance,
+												  ValueType&&	value)					const;
+
+			/**
+			*	@brief Copy valueSize bytes starting from valuePtr into this field's address in instance.
+			*
+			*	@param instance		Instance we write the bytes in.
+			*	@param valuePtr		Pointer to the value to copy.
+			*	@param valueSize	Number of bytes to copy into the field.
+			* 
+			*	@exception ConstViolation if the field is actually const and therefore readonly.
+			*/
+			REFUREKU_API void			setUnsafe(void*			instance,
+												  void const*	valuePtr,
+												  std::size_t	valueSize)				const;
+
+			/**
 			*	@brief	Get a pointer to this field in the provided instance.
 			*
 			*	@param instance Instance we get the field from.
@@ -106,6 +190,21 @@ namespace rfk
 			RFK_NODISCARD void*			getPtr(OwnerStructType& instance)				const;
 
 			/**
+			*	@brief Get a pointer to this field in the provided instance.
+			*		   This method DOES NOT perform any pointer adjustment on the provided instance so it is unsafe if instance
+			*		   is not a valid pointer to an object of the field's owner archetype.
+			*		   Prefer using Field::getPtr for safety if you know the static type of your instance in the calling context.
+			*
+			*	@param instance Instance we get the field from.
+			*
+			*	@return Pointer to this field in the provided instance.
+			* 
+			*	@exception ConstViolation if the field is actually const.
+			*/
+			RFK_NODISCARD REFUREKU_API 
+				void*					getPtrUnsafe(void* instance)					const;
+
+			/**
 			*	@brief Get a const pointer to this field in the provided instance.
 			*
 			*	@param instance Instance we get the field from.
@@ -114,6 +213,19 @@ namespace rfk
 			*/
 			template <typename OwnerStructType, typename = std::enable_if_t<is_value_v<OwnerStructType>>>
 			RFK_NODISCARD void const*	getConstPtr(OwnerStructType const& instance)	const	noexcept;
+
+			/**
+			*	@brief Get a const pointer to this field in the provided instance.
+			*		   This method DOES NOT perform any pointer adjustment on the provided instance so it is unsafe if instance
+			*		   is not a valid pointer to an object of the field's owner archetype.
+			*		   Prefer using Field::getConstPtr for safety if you know the static type of your instance in the calling context.
+			*
+			*	@param instance Instance we get the field from.
+			*
+			*	@return Const pointer to this field in the provided instance.
+			*/
+			RFK_NODISCARD REFUREKU_API
+				void const*				getConstPtrUnsafe(void const* instance)			const	noexcept;
 
 			/**
 			*	@brief Get the memory offset of this field in an instance of its owner class (Field::getOwner()).
@@ -128,25 +240,6 @@ namespace rfk
 			class FieldImpl;
 
 			RFK_GEN_GET_PIMPL(FieldImpl, Entity::getPimpl())
-
-		private:
-			template <typename ValueType>
-			RFK_NODISCARD ValueType					getInternal(void* instance)					const;
-
-			template <typename ValueType>
-			RFK_NODISCARD ValueType const			getInternal(void const* instance)			const	noexcept;
-
-			template <typename ValueType>
-			void									setInternal(void*		instance,
-																ValueType&&	value)				const;
-
-			REFUREKU_API void						setInternal(void*		instance,
-																void const* valuePtr,
-																std::size_t	valueSize)			const;
-
-			RFK_NODISCARD REFUREKU_API void*		getPtrInternal(void* instance)				const;
-
-			RFK_NODISCARD REFUREKU_API void const*	getConstPtrInternal(void const* instance)	const	noexcept;
 	};
 
 	REFUREKU_TEMPLATE_API(rfk::Allocator<Field const*>);
