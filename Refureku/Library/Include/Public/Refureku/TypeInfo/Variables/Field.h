@@ -129,7 +129,7 @@ namespace rfk
 
 			RFK_GEN_GET_PIMPL(FieldImpl, Entity::getPimpl())
 
-		public:
+		private:
 			template <typename ValueType>
 			RFK_NODISCARD ValueType					getInternal(void* instance)					const;
 
